@@ -222,6 +222,7 @@ impl TryFrom<&LogicalType> for DataType {
             "duration:ms" => Some(Duration(TimeUnit::Millisecond)),
             "duration:us" => Some(Duration(TimeUnit::Microsecond)),
             "duration:ns" => Some(Duration(TimeUnit::Nanosecond)),
+            "struct" => Some(Struct(Fields::empty())),
             _ => None,
         } {
             Ok(t)
