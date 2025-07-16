@@ -75,6 +75,10 @@ impl LogicalType {
     fn is_struct(&self) -> bool {
         self.0 == "struct"
     }
+
+    fn is_fixed_size_list(&self) -> bool {
+        self.0.starts_with("fixed_size_list:")
+    }
 }
 
 impl From<&str> for LogicalType {

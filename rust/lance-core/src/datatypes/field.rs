@@ -161,6 +161,12 @@ impl Field {
             lt if lt.is_struct() => {
                 DataType::Struct(self.children.iter().map(ArrowField::from).collect())
             }
+            lt if lt.is_fixed_size_list() => {
+                // Extract size from logical type string "fixed_size_list:INNER:SIZE"
+                let parts: Vec<&str> = lt.0.split(':').collect();
+                let size = parts.last().unwrap().parse::<i32>().unwrap();
+                DataType::FixedSizeList(Arc::new(ArrowField::from(&self.children[0])), size)
+            }
             lt => DataType::try_from(lt).unwrap(),
         }
     }
@@ -953,6 +959,7 @@ impl TryFrom<&ArrowField> for Field {
                 .collect::<Result<_>>()?,
             DataType::List(item) => vec![Self::try_from(item.as_ref())?],
             DataType::LargeList(item) => vec![Self::try_from(item.as_ref())?],
+            DataType::FixedSizeList(item, _) => vec![Self::try_from(item.as_ref())?],
             _ => vec![],
         };
         let storage_class = field
@@ -1113,6 +1120,34 @@ mod tests {
             .0,
             "struct"
         );
+    }
+
+    #[test]
+    fn test_fixed_size_list_struct() {
+        // Test the scenario from issue #4215
+        let struct_field = ArrowField::new(
+            "name",
+            DataType::Utf8,
+            true,
+        );
+        let struct_type = DataType::Struct(Fields::from(vec![struct_field]));
+        let fixed_size_list_type = DataType::FixedSizeList(Arc::new(ArrowField::new(
+            "item",
+            struct_type,
+            true,
+        )), 2);
+        
+        let arrow_field = ArrowField::new(
+            "data",
+            fixed_size_list_type.clone(),
+            false,
+        );
+        
+        // This should not panic
+        let field = Field::try_from(&arrow_field).unwrap();
+        assert_eq!(field.name, "data");
+        assert_eq!(&field.data_type(), &fixed_size_list_type);
+        assert_eq!(ArrowField::from(&field), arrow_field);
     }
 
     #[test]
