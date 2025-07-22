@@ -164,6 +164,20 @@ impl Field {
             lt if lt.is_struct() => {
                 DataType::Struct(self.children.iter().map(ArrowField::from).collect())
             }
+            lt if lt.is_fixed_size_list() => {
+                // Parse the size from the logical type string
+                let parts: Vec<&str> = lt.0.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(size) = parts.last().unwrap().parse::<i32>() {
+                        return DataType::FixedSizeList(
+                            Arc::new(ArrowField::from(&self.children[0])),
+                            size,
+                        );
+                    }
+                }
+                // Fallback to try_from if parsing fails
+                DataType::try_from(lt).unwrap()
+            }
             lt => DataType::try_from(lt).unwrap(),
         }
     }
@@ -974,6 +988,7 @@ impl TryFrom<&ArrowField> for Field {
                 .collect::<Result<_>>()?,
             DataType::List(item) => vec![Self::try_from(item.as_ref())?],
             DataType::LargeList(item) => vec![Self::try_from(item.as_ref())?],
+            DataType::FixedSizeList(item, _) => vec![Self::try_from(item.as_ref())?],
             _ => vec![],
         };
         let storage_class = field
@@ -1481,6 +1496,95 @@ mod tests {
             no_id.explain_difference(&expected, &compare_ids),
             Some("`a` should have id 0 but id was -1".to_string())
         );
+    }
+
+    #[test]
+    fn test_list_of_struct_support() {
+        // Test variable-length list of structs
+        let struct_field = ArrowField::new(
+            "item",
+            DataType::Struct(Fields::from(vec![
+                ArrowField::new("name", DataType::Utf8, false)
+            ])),
+            true,
+        );
+        let var_list_field = ArrowField::new(
+            "data",
+            DataType::List(Arc::new(struct_field)),
+            false,
+        );
+        
+        let lance_field = Field::try_from(&var_list_field).unwrap();
+        let reconstructed = ArrowField::from(&lance_field);
+        
+        assert_eq!(var_list_field, reconstructed);
+        assert_eq!(lance_field.logical_type.0, "list.struct");
+        assert_eq!(lance_field.children.len(), 1);
+        assert_eq!(lance_field.children[0].logical_type.0, "struct");
+        assert_eq!(lance_field.children[0].children.len(), 1);
+        assert_eq!(lance_field.children[0].children[0].name, "name");
+        
+        // Test fixed-length list of structs
+        let fixed_list_field = ArrowField::new(
+            "data",
+            DataType::FixedSizeList(Arc::new(ArrowField::new(
+                "item",
+                DataType::Struct(Fields::from(vec![
+                    ArrowField::new("name", DataType::Utf8, false),
+                    ArrowField::new("value", DataType::Int32, true),
+                ])),
+                true,
+            )), 2),
+            false,
+        );
+        
+        let lance_field = Field::try_from(&fixed_list_field).unwrap();
+        let reconstructed = ArrowField::from(&lance_field);
+        
+        assert_eq!(fixed_list_field, reconstructed);
+        assert!(lance_field.logical_type.0.starts_with("fixed_size_list:struct:"));
+        assert_eq!(lance_field.children.len(), 1);
+        assert_eq!(lance_field.children[0].logical_type.0, "struct");
+        assert_eq!(lance_field.children[0].children.len(), 2);
+    }
+
+    #[test]
+    fn test_reproducer_case() {
+        // This test replicates the exact case from the bug report
+        
+        // Variable-length list of structs
+        let var_list = ArrowField::new(
+            "data",
+            DataType::List(Arc::new(ArrowField::new(
+                "item", 
+                DataType::Struct(Fields::from(vec![
+                    ArrowField::new("name", DataType::Utf8, false)
+                ])), 
+                true
+            ))),
+            false
+        );
+        
+        let lance_field = Field::try_from(&var_list).unwrap();
+        let reconstructed = ArrowField::from(&lance_field);
+        assert_eq!(var_list, reconstructed);
+        
+        // Fixed-length list of structs  
+        let fixed_list = ArrowField::new(
+            "data",
+            DataType::FixedSizeList(Arc::new(ArrowField::new(
+                "item",
+                DataType::Struct(Fields::from(vec![
+                    ArrowField::new("name", DataType::Utf8, false)
+                ])),
+                true
+            )), 2),
+            false
+        );
+        
+        let lance_field = Field::try_from(&fixed_list).unwrap();
+        let reconstructed = ArrowField::from(&lance_field);
+        assert_eq!(fixed_list, reconstructed);
     }
 
     #[test]

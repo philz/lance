@@ -76,6 +76,10 @@ impl LogicalType {
     fn is_struct(&self) -> bool {
         self.0 == "struct"
     }
+
+    fn is_fixed_size_list(&self) -> bool {
+        self.0.starts_with("fixed_size_list:")
+    }
 }
 
 impl From<&str> for LogicalType {
@@ -344,6 +348,7 @@ impl TryFrom<&LogicalType> for DataType {
                         Ok(Timestamp(timeunit, tz))
                     }
                 }
+                "struct" => Ok(Struct(Fields::empty())),
                 _ => Err(Error::Schema {
                     message: format!("Unsupported logical type: {}", lt),
                     location: location!(),
@@ -391,4 +396,51 @@ pub fn lance_supports_nulls(datatype: &DataType) -> bool {
             | DataType::FixedSizeBinary(_)
             | DataType::FixedSizeList(_, _)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timeunit_to_str() {
+        assert_eq!(timeunit_to_str(&TimeUnit::Second), "s");
+        assert_eq!(timeunit_to_str(&TimeUnit::Millisecond), "ms");
+        assert_eq!(timeunit_to_str(&TimeUnit::Microsecond), "us");
+        assert_eq!(timeunit_to_str(&TimeUnit::Nanosecond), "ns");
+    }
+
+    #[test]
+    fn test_parse_timeunit() {
+        assert_eq!(parse_timeunit("s").unwrap(), TimeUnit::Second);
+        assert_eq!(parse_timeunit("ms").unwrap(), TimeUnit::Millisecond);
+        assert_eq!(parse_timeunit("us").unwrap(), TimeUnit::Microsecond);
+        assert_eq!(parse_timeunit("ns").unwrap(), TimeUnit::Nanosecond);
+    }
+
+    #[test]
+    fn test_struct_logical_type_conversion() {
+        let struct_logical_type = LogicalType::from("struct");
+        let arrow_type = DataType::try_from(&struct_logical_type).unwrap();
+        assert_eq!(arrow_type, DataType::Struct(Fields::empty()));
+    }
+
+    #[test]
+    fn test_logical_type_roundtrip() {
+        // Test that struct types can be converted to logical type and back
+        let struct_fields = Fields::from(vec![
+            ArrowField::new("name", DataType::Utf8, false),
+            ArrowField::new("value", DataType::Int32, true),
+        ]);
+        let struct_type = DataType::Struct(struct_fields);
+        
+        let logical_type = LogicalType::try_from(&struct_type).unwrap();
+        assert_eq!(logical_type.0, "struct");
+        
+        // When converting back, we get an empty struct since the logical type
+        // doesn't store field information. The actual field information
+        // is handled by the Field structure.
+        let converted_back = DataType::try_from(&logical_type).unwrap();
+        assert_eq!(converted_back, DataType::Struct(Fields::empty()));
+    }
 }
