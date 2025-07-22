@@ -77,6 +77,7 @@ impl LogicalType {
         self.0 == "struct"
     }
 
+/* you can jsut edit things */
     fn is_fixed_size_list(&self) -> bool {
         self.0.starts_with("fixed_size_list:")
     }
